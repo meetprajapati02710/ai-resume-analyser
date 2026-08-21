@@ -9,8 +9,14 @@ from resume_sections import detect_sections
 from skill_category import categorize_skills
 from report_generator import generate_report
 from job_recommender import recommend_jobs
-from resume_strength import resume_strength 
+from resume_strength import resume_strength
 from llm_chat import ask_resume_ai
+from chatbot import chat_with_resume
+from interview_coach import generate_interview_questions
+from services.resume_service import analyze_resume
+from interview_evaluator import evaluate_answer
+import re
+
 
 # ----------------------------------------------------
 # Page Configuration
@@ -20,6 +26,20 @@ st.set_page_config(
     page_icon="📄",
     layout="wide"
 )
+if "interview_scores" not in st.session_state:
+    st.session_state.interview_scores = {}
+
+if "interview_feedbacks" not in st.session_state:
+    st.session_state.interview_feedbacks = {}
+
+if "interview_questions" not in st.session_state:
+    st.session_state.interview_questions = []
+
+if "current_question" not in st.session_state:
+    st.session_state.current_question = 0
+
+if "interview_answers" not in st.session_state:
+    st.session_state.interview_answers = {}
 
 # ----------------------------------------------------
 # Sidebar
@@ -67,21 +87,40 @@ if uploaded_file is not None:
     st.success("✅ Resume uploaded successfully!")
 
     # ------------------------------------------------
-    # Extract Resume Text
+    # Analyze Resume
     # ------------------------------------------------
-    resume_text = extract_text_from_pdf(uploaded_file.name)
+    analysis = analyze_resume(
+        uploaded_file.name,
+        skills
+    )
 
+    resume_text = analysis["resume_text"]
+    cleaned_text = analysis["cleaned_text"]
+
+    words = analysis["words"]
+    characters = analysis["characters"]
+    lines = analysis["lines"]
+
+    sections = analysis["sections"]
+
+    found_skills = analysis["found_skills"]
+
+    categorized = analysis["categorized"]
+
+    # ------------------------------------------------
+    # Display Extracted Resume
+    # ------------------------------------------------
     st.subheader("📄 Extracted Resume")
+
     st.text_area(
         "Resume Text",
         resume_text,
         height=250
     )
+
     # ------------------------------------------------
     # Resume Statistics
     # ------------------------------------------------
-    words, characters, lines = resume_statistics(resume_text)
-
     st.subheader("📈 Resume Statistics")
 
     col1, col2, col3 = st.columns(3)
@@ -98,8 +137,6 @@ if uploaded_file is not None:
     # ------------------------------------------------
     # Clean Resume
     # ------------------------------------------------
-    cleaned_text = clean_text(resume_text)
-
     st.subheader("🧹 Cleaned Resume")
 
     st.text_area(
@@ -111,8 +148,6 @@ if uploaded_file is not None:
     # ------------------------------------------------
     # Resume Sections
     # ------------------------------------------------
-    sections = detect_sections(cleaned_text)
-
     st.subheader("📑 Resume Sections")
 
     for section, present in sections.items():
@@ -122,10 +157,8 @@ if uploaded_file is not None:
             st.error(f"❌ {section}")
 
     # ------------------------------------------------
-    # Extract Skills
+    # Detected Skills
     # ------------------------------------------------
-    found_skills = extract_skills(cleaned_text, skills)
-
     st.subheader("💻 Detected Skills")
 
     if found_skills:
@@ -137,8 +170,6 @@ if uploaded_file is not None:
     # ------------------------------------------------
     # Skill Categories
     # ------------------------------------------------
-    categorized = categorize_skills(found_skills)
-
     st.subheader("📂 Skill Categories")
 
     for category, skill_list in categorized.items():
@@ -149,6 +180,7 @@ if uploaded_file is not None:
 
             for skill in skill_list:
                 st.success(skill)
+
     # ------------------------------------------------
     # Job Description
     # ------------------------------------------------
@@ -173,7 +205,7 @@ if uploaded_file is not None:
         else:
             st.warning("No skills found.")
 
-               # ------------------------------------------------
+        # ------------------------------------------------
         # ATS Score
         # ------------------------------------------------
         matched_skills = set(found_skills).intersection(set(job_skills))
@@ -207,6 +239,7 @@ if uploaded_file is not None:
             missing_skills,
             cleaned_text
         )
+
         # ------------------------------------------------
         # Dashboard
         # ------------------------------------------------
@@ -248,9 +281,6 @@ if uploaded_file is not None:
             st.success("Excellent! No missing skills.")
 
         # ------------------------------------------------
-        # Recommendations
-               # ------------------------------------------------
-                # ------------------------------------------------
         # AI Resume Suggestions
         # ------------------------------------------------
         st.subheader("💡 AI Resume Suggestions")
@@ -303,8 +333,8 @@ if uploaded_file is not None:
                 file_name="Resume_Report.pdf",
                 mime="application/pdf"
             )
-                    # ------------------------------------------------
-                # ------------------------------------------------
+
+        # ------------------------------------------------
         # AI Resume Chatbot
         # ------------------------------------------------
         st.divider()
@@ -348,21 +378,29 @@ if uploaded_file is not None:
             with st.chat_message("user"):
                 st.markdown(user_question)
 
-            # Generate Gemini Answer
+            # Generate AI Answer
             with st.chat_message("assistant"):
 
                 with st.spinner("Analyzing your resume..."):
 
                     try:
-                        answer = ask_resume_ai(
-                            resume_text,
-                            job_description,
-                            user_question
+                        answer, sources = chat_with_resume(
+                            resume_text=cleaned_text,
+                            job_description=cleaned_jd,
+                            user_question=user_question
                         )
 
+                        # Display answer
                         st.markdown(answer)
 
-                        # Save successful Gemini response
+                        # Display sources
+                        st.divider()
+                        st.subheader("📚 Sources Used")
+
+                        for source in sources:
+                            st.caption(source)
+
+                        # Save assistant response
                         st.session_state.messages.append(
                             {
                                 "role": "assistant",
@@ -370,7 +408,199 @@ if uploaded_file is not None:
                             }
                         )
 
-                    except Exception as error:
-                        st.error(
-                            f"Unable to generate AI response: {error}"
+                    except Exception as e:
+                        st.error(f"Error: {e}")
+
+        # ------------------------------------------------
+        # AI Interview Coach
+        # ------------------------------------------------
+        st.divider()
+        st.header("🎤 AI Interview Coach")
+
+        st.subheader("⚙️ Interview Settings")
+
+        interview_mode = st.selectbox(
+            "Choose Interview Mode",
+            [
+                "Quick Interview",
+                "Standard Interview",
+                "Comprehensive Interview",
+                "Company Simulation"
+            ]
+        )
+
+        if interview_mode == "Quick Interview":
+            num_questions = 5
+        elif interview_mode == "Standard Interview":
+            num_questions = 10
+        elif interview_mode == "Comprehensive Interview":
+            num_questions = 20
+        else:
+            num_questions = 30
+
+        # -----------------------------
+        # Generate Questions
+        # -----------------------------
+        if st.button("🎯 Generate Interview Questions"):
+
+            with st.spinner("Generating Interview Questions..."):
+
+                questions = generate_interview_questions(
+                    cleaned_text,
+                    cleaned_jd,
+                    num_questions,
+                    interview_mode
+                )
+
+                # Handle errors
+                if questions.startswith("⚠️") or questions.startswith("❌"):
+                    st.error(questions)
+
+                else:
+
+                    question_list = []
+
+                    for line in questions.split("\n"):
+
+                        line = line.strip()
+
+                        if not line:
+                            continue
+
+                        if re.match(
+                            r"^(Q?\d+[\.\)]|Question\s+\d+:)",
+                            line,
+                            re.IGNORECASE
+                        ):
+                            question_list.append(line)
+
+                    # Fallback
+                    if not question_list:
+                        question_list = [
+                            l.strip()
+                            for l in questions.split("\n")
+                            if l.strip()
+                        ]
+
+                    st.session_state.interview_questions = question_list
+                    st.session_state.current_question = 0
+                    st.session_state.interview_answers = {}
+                    st.session_state.interview_feedbacks = {}
+                    st.session_state.interview_scores = {}
+
+        # -----------------------------
+        # Display Current Question
+        # -----------------------------
+        if st.session_state.interview_questions:
+
+            questions = st.session_state.interview_questions
+            current = st.session_state.current_question
+
+            # Progress Bar
+            st.progress((current + 1) / len(questions))
+
+            st.subheader(
+                f"Question {current + 1} of {len(questions)}"
+            )
+
+            st.info(questions[current])
+
+            # Restore previous answer if available
+            answer = st.text_area(
+                "✍️ Your Answer",
+                value=st.session_state.interview_answers.get(current, ""),
+                key=f"answer_box_{current}",
+                height=180
+            )
+
+            # -----------------------------
+            # Evaluate Current Answer
+            # -----------------------------
+            if st.button("✅ Evaluate Answer"):
+
+                if answer.strip():
+
+                    with st.spinner("Evaluating your answer..."):
+
+                        # Save answer
+                        st.session_state.interview_answers[current] = answer
+
+                        # AI Evaluation
+                        feedback = evaluate_answer(
+                            cleaned_text,
+                            cleaned_jd,
+                            questions[current],
+                            answer
                         )
+
+                        # Save feedback
+                        st.session_state.interview_feedbacks[current] = feedback
+
+                        # Extract score
+                        match = re.search(
+                            r"Overall Score:\s*(\d+(?:\.\d+)?)\s*/\s*10",
+                            feedback,
+                            re.IGNORECASE
+                        )
+
+                        if match:
+                            score = float(match.group(1))
+                        else:
+                            score = 0
+
+                        st.session_state.interview_scores[current] = score
+
+                else:
+                    st.warning("Please enter your answer.")
+
+            # -----------------------------
+            # Show Previous Feedback
+            # -----------------------------
+            if current in st.session_state.interview_feedbacks:
+
+                st.subheader("📊 AI Feedback")
+
+                st.markdown(
+                    st.session_state.interview_feedbacks[current]
+                )
+
+            # -----------------------------
+            # Show Question Score
+            # -----------------------------
+            if current in st.session_state.interview_scores:
+
+                st.metric(
+                    "⭐ Question Score",
+                    f"{st.session_state.interview_scores[current]}/10"
+                )
+
+            # -----------------------------
+            # Navigation Buttons
+            # -----------------------------
+            col1, col2 = st.columns(2)
+
+            with col1:
+
+                if current > 0:
+
+                    if st.button("⬅ Previous"):
+
+                        st.session_state.interview_answers[current] = answer
+                        st.session_state.current_question -= 1
+                        st.rerun()
+
+            with col2:
+
+                if current < len(questions) - 1:
+
+                    if st.button("Next ➡"):
+
+                        st.session_state.interview_answers[current] = answer
+                        st.session_state.current_question += 1
+                        st.rerun()
+
+                else:
+
+                    st.success("🎉 Interview Completed!")
+
+                    st.balloons()

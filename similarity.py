@@ -14,4 +14,4 @@ def calculate_similarity(resume_text, job_description):
         jd_embedding
     )[0][0]
 
-    return round(similarity * 100, 2)
+    return round(similarity * 100, 2) 

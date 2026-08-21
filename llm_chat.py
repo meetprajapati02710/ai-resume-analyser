@@ -26,32 +26,43 @@ client = genai.Client(api_key=api_key)
 def ask_resume_ai(
     resume_text,
     job_description,
-    user_question
+    user_question,
+    retrieved_context=""
 ):
 
     prompt = f"""
 You are an AI Resume Assistant.
 
-Analyze the candidate's resume and job description.
+Answer the user's question using the retrieved knowledge first.
+If the retrieved knowledge is not sufficient, use the resume and job description.
 
 Rules:
-1. Answer the user's question clearly.
-2. Use the resume as context.
-3. Use the job description as context.
-4. Do not invent skills or experience.
-5. Provide practical suggestions.
+1. Never invent skills or experience.
+2. Use the resume as the primary source for candidate information.
+3. Use the retrieved knowledge for ATS rules, interview guidance, and career advice.
+4. If something is missing from the resume, clearly say so.
 
-RESUME:
+==============================
+RETRIEVED KNOWLEDGE
+==============================
+
+{retrieved_context}
+
+==============================
+RESUME
+==============================
 
 {resume_text}
 
-
-JOB DESCRIPTION:
+==============================
+JOB DESCRIPTION
+==============================
 
 {job_description}
 
-
-USER QUESTION:
+==============================
+USER QUESTION
+==============================
 
 {user_question}
 """
